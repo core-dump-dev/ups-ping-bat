@@ -10,20 +10,20 @@ param(
     [int]$NUT_TIMEOUT = 5
 )
 
-# ---------- РќР°СЃС‚СЂРѕР№РєРё ----------
+# ---------- Настройки ----------
 $ScriptDir           = Split-Path -Parent $MyInvocation.MyCommand.Path
 $LOG_DIR             = Join-Path $ScriptDir "logs"
-$ONLINE_LOG_INTERVAL = 3600        # 1 С‡Р°СЃ
-$EVENT_LOG_INTERVAL  = 5           # 5 СЃРµРє
+$ONLINE_LOG_INTERVAL = 3600        # 1 час
+$EVENT_LOG_INTERVAL  = 5           # 5 сек
 $MAX_FILE_SIZE       = 50MB
 $MAX_TOTAL_SIZE      = 500MB
-$POLL_INTERVAL       = 1           # СЃРµРє РјРµР¶РґСѓ РѕРїСЂРѕСЃР°РјРё NUT
+$POLL_INTERVAL       = 1           # сек между опросами NUT
 
-$ONLINE_FILE_NAME    = "РР‘Рџ_РѕРЅР»Р°Р№РЅ.txt"
-$EVENT_FILE_PREFIX   = "РР‘Рџ_РѕС‚РєР»СЋС‡РµРЅРёРµ-РѕС‚-СЃРµС‚Рё"
+$ONLINE_FILE_NAME    = "ИБП_онлайн.txt"
+$EVENT_FILE_PREFIX   = "ИБП_отключение-от-сети"
 
-# РџРѕР»РЅС‹Р№ СЃРїРёСЃРѕРє РїРµСЂРµРјРµРЅРЅС‹С… (РёСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ РґР»СЏ fallback GET VAR,
-# РµСЃР»Рё LIST VAR РЅРµ СЂР°Р±РѕС‚Р°РµС‚ РїРѕ СЃРµС‚Рё вЂ” Сѓ РІР°СЃ РєР°Рє СЂР°Р· С‚Р°РєРѕР№ СЃР»СѓС‡Р°Р№)
+# Полный список переменных (используется для fallback GET VAR,
+# если LIST VAR не работает по сети — у вас как раз такой случай)
 $UPS_VARS = @(
     "battery.charge","battery.charge.low","battery.charge.warning",
     "battery.current","battery.date","battery.mfr.date",
@@ -46,12 +46,12 @@ $UPS_VARS = @(
     "ups.vendorid","ups.productid","ups.temperature","ups.type"
 )
 
-# ---------- РЎРѕСЃС‚РѕСЏРЅРёРµ Р»РѕРіРіРµСЂР° ----------
+# ---------- Состояние логгера ----------
 $script:LastOnlineLog  = 0
 $script:EventFile      = $null
 $script:LastEventWrite = 0
 
-# ---------- РЈС‚РёР»РёС‚С‹ Р»РѕРіРёСЂРѕРІР°РЅРёСЏ ----------
+# ---------- Утилиты логирования ----------
 function Ensure-LogDir {
     if (-not (Test-Path $LOG_DIR)) {
         New-Item -Path $LOG_DIR -ItemType Directory -Force | Out-Null
@@ -66,7 +66,7 @@ function Write-LogLine {
         [string]$Line,
         [switch]$NoAppend
     )
-    $enc = New-Object System.Text.UTF8Encoding($false)  # Р±РµР· BOM
+    $enc = New-Object System.Text.UTF8Encoding($false)  # без BOM
     if ($NoAppend) {
         [System.IO.File]::WriteAllText($Path, $Line + "`r`n", $enc)
     } else {
@@ -78,8 +78,8 @@ function Format-LogLine {
     param([hashtable]$Vars)
     $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
     $statusRaw = if ($Vars.ContainsKey("ups.status")) { $Vars["ups.status"] } else { "" }
-    if ($statusRaw -match "OL")      { $statusText = "РџРёС‚Р°РЅРёРµ РѕС‚ СЃРµС‚Рё" }
-    elseif ($statusRaw -match "OB")  { $statusText = "Р Р°Р±РѕС‚Р° РѕС‚ Р±Р°С‚Р°СЂРµРё" }
+    if ($statusRaw -match "OL")      { $statusText = "Питание от сети" }
+    elseif ($statusRaw -match "OB")  { $statusText = "Работа от батареи" }
     else                             { $statusText = $statusRaw }
 
     $charge  = if ($Vars.ContainsKey("battery.charge"))  { $Vars["battery.charge"] }  else { "?" }
@@ -88,7 +88,7 @@ function Format-LogLine {
     $inV     = if ($Vars.ContainsKey("input.voltage"))   { $Vars["input.voltage"] }   else { "?" }
     $outV    = if ($Vars.ContainsKey("output.voltage"))  { $Vars["output.voltage"] }  else { "?" }
 
-    return "[$ts] РЎС‚Р°С‚СѓСЃ`t$statusText`tР—Р°СЂСЏРґ`t$charge %`tРћСЃС‚Р°Р»РѕСЃСЊ`t$runtime СЃРµРє`tРќР°РіСЂСѓР·РєР°`t$load %`tР’С…РѕРґ`t$inV Р’`tР’С‹С…РѕРґ`t$outV Р’"
+    return "[$ts] Статус`t$statusText`tЗаряд`t$charge %`tОсталось`t$runtime сек`tНагрузка`t$load %`tВход`t$inV В`tВыход`t$outV В"
 }
 
 function Rotate-FileIfNeeded {
@@ -123,7 +123,7 @@ function Start-EventLogging {
     param([hashtable]$Vars)
     $ts = Get-Date -Format "dd.MM.yyyy_HH-mm-ss"
     $filename = Join-Path $LOG_DIR "${EVENT_FILE_PREFIX}_${ts}.txt"
-    $header = "[" + (Get-Date -Format "yyyy-MM-dd HH:mm:ss") + "] === РќРђР§РђР›Рћ РЎРћР‘Р«РўРРЇ (РѕС‚РєР»СЋС‡РµРЅРёРµ РїРёС‚Р°РЅРёСЏ) ==="
+    $header = "[" + (Get-Date -Format "yyyy-MM-dd HH:mm:ss") + "] === НАЧАЛО СОБЫТИЯ (отключение питания) ==="
     Write-LogLine -Path $filename -Line $header -NoAppend
     Write-LogLine -Path $filename -Line (Format-LogLine -Vars $Vars)
     $script:EventFile = $filename
@@ -134,7 +134,7 @@ function Continue-EventLogging {
     param([hashtable]$Vars)
     $ts = Get-Date -Format "dd.MM.yyyy_HH-mm-ss"
     $newFile = Join-Path $LOG_DIR "${EVENT_FILE_PREFIX}_${ts}.txt"
-    $header = "[" + (Get-Date -Format "yyyy-MM-dd HH:mm:ss") + "] === РџР РћР”РћР›Р–Р•РќРР• РЎРћР‘Р«РўРРЇ (СЂРѕС‚Р°С†РёСЏ С„Р°Р№Р»Р°) ==="
+    $header = "[" + (Get-Date -Format "yyyy-MM-dd HH:mm:ss") + "] === ПРОДОЛЖЕНИЕ СОБЫТИЯ (ротация файла) ==="
     Write-LogLine -Path $newFile -Line $header -NoAppend
     Write-LogLine -Path $newFile -Line (Format-LogLine -Vars $Vars)
     $script:EventFile = $newFile
@@ -143,7 +143,7 @@ function Continue-EventLogging {
 function Stop-EventLogging {
     param([int]$ChargeInt)
     if ($script:EventFile) {
-        $endHeader = "[" + (Get-Date -Format "yyyy-MM-dd HH:mm:ss") + "] === РљРћРќР•Р¦ РЎРћР‘Р«РўРРЇ (РїРёС‚Р°РЅРёРµ РІРѕСЃСЃС‚Р°РЅРѕРІР»РµРЅРѕ, Р·Р°СЂСЏРґ ${ChargeInt}%) ==="
+        $endHeader = "[" + (Get-Date -Format "yyyy-MM-dd HH:mm:ss") + "] === КОНЕЦ СОБЫТИЯ (питание восстановлено, заряд ${ChargeInt}%) ==="
         Write-LogLine -Path $script:EventFile -Line $endHeader
         $script:EventFile = $null
         Cleanup-OldEventFiles
@@ -171,7 +171,7 @@ function Write-EventLog {
     }
 }
 
-# ---------- РљР»РёРµРЅС‚ NUT ----------
+# ---------- Клиент NUT ----------
 function Get-UPSVars {
     $result = @{}
     $client = $null
@@ -179,7 +179,7 @@ function Get-UPSVars {
         $client = New-Object System.Net.Sockets.TcpClient
         $iar = $client.BeginConnect($NUT_HOST, $NUT_PORT, $null, $null)
         if (-not $iar.AsyncWaitHandle.WaitOne($NUT_TIMEOUT * 1000, $false)) {
-            throw "РўР°Р№РјР°СѓС‚ РїРѕРґРєР»СЋС‡РµРЅРёСЏ Рє ${NUT_HOST}:${NUT_PORT}"
+            throw "Таймаут подключения к ${NUT_HOST}:${NUT_PORT}"
         }
         $client.EndConnect($iar)
         $client.ReceiveTimeout = $NUT_TIMEOUT * 1000
@@ -190,7 +190,7 @@ function Get-UPSVars {
         $writer = New-Object System.IO.StreamWriter($stream)
         $writer.AutoFlush = $true
 
-        # 1) РџСЂРѕР±СѓРµРј LIST VAR
+        # 1) Пробуем LIST VAR
         $writer.WriteLine("LIST VAR $UPS_NAME")
         $gotList = $false
         while ($true) {
@@ -204,7 +204,7 @@ function Get-UPSVars {
             }
         }
 
-        # 2) Р•СЃР»Рё LIST VAR РїСѓСЃС‚ вЂ” РёСЃРїРѕР»СЊР·СѓРµРј GET VAR РїРѕ СЃРїРёСЃРєСѓ
+        # 2) Если LIST VAR пуст — используем GET VAR по списку
         if (-not $gotList) {
             foreach ($v in $UPS_VARS) {
                 $writer.WriteLine("GET VAR $UPS_NAME $v")
@@ -223,11 +223,11 @@ function Get-UPSVars {
     return $result
 }
 
-# ---------- Р Р°Р·РѕРІС‹Р№ РІС‹РІРѕРґ (СЂРµР¶РёРј show) ----------
+# ---------- Разовый вывод (режим show) ----------
 function Show-UPSStatus {
     param([hashtable]$Vars)
     if ($Vars.ContainsKey("error")) {
-        Write-Host "РћС€РёР±РєР° РїРѕРґРєР»СЋС‡РµРЅРёСЏ: $($Vars['error'])" -ForegroundColor Red
+        Write-Host "Ошибка подключения: $($Vars['error'])" -ForegroundColor Red
         return
     }
 
@@ -246,62 +246,62 @@ function Show-UPSStatus {
     $test   = if ($Vars.ContainsKey("ups.test.result")){ $Vars["ups.test.result"] } else { $null }
 
     $statusText = switch -Regex ($status) {
-        "OL LB" { "РЎРµС‚СЊ РµСЃС‚СЊ, РЅРѕ Р±Р°С‚Р°СЂРµСЏ СЂР°Р·СЂСЏР¶РµРЅР°" }
-        "OB LB" { "Р‘Р°С‚Р°СЂРµРё СЂР°Р·СЂСЏР¶Р°СЋС‚СЃСЏ (Low Battery)" }
-        "OB"    { "Р Р°Р±РѕС‚Р° РѕС‚ Р±Р°С‚Р°СЂРµР№ (On Battery)" }
-        "OL"    { "Р Р°Р±РѕС‚Р° РѕС‚ СЃРµС‚Рё (On Line)" }
+        "OL LB" { "Сеть есть, но батарея разряжена" }
+        "OB LB" { "Батареи разряжаются (Low Battery)" }
+        "OB"    { "Работа от батарей (On Battery)" }
+        "OL"    { "Работа от сети (On Line)" }
         default { $status }
     }
 
     Clear-Host
     Write-Host "==================================================" -ForegroundColor Cyan
-    Write-Host "          РЎС‚Р°С‚СѓСЃ РР‘Рџ (NUT)                       " -ForegroundColor Yellow
+    Write-Host "          Статус ИБП (NUT)                       " -ForegroundColor Yellow
     Write-Host "==================================================" -ForegroundColor Cyan
-    Write-Host ("Р”Р°С‚Р° Рё РІСЂРµРјСЏ: {0}" -f (Get-Date -Format 'dd.MM.yyyy HH:mm:ss')) -ForegroundColor Gray
+    Write-Host ("Дата и время: {0}" -f (Get-Date -Format 'dd.MM.yyyy HH:mm:ss')) -ForegroundColor Gray
     Write-Host ""
 
-    Write-Host "РњРѕРґРµР»СЊ: " -NoNewline -ForegroundColor Magenta
+    Write-Host "Модель: " -NoNewline -ForegroundColor Magenta
     Write-Host "$mfr $model" -ForegroundColor White
 
-    Write-Host "РЎС‚Р°С‚СѓСЃ: " -NoNewline -ForegroundColor Magenta
+    Write-Host "Статус: " -NoNewline -ForegroundColor Magenta
     if ($status -match "OB") { Write-Host "$statusText" -ForegroundColor Yellow }
     else                     { Write-Host "$statusText" -ForegroundColor Green }
 
     Write-Host ""
-    Write-Host "Р‘РђРўРђР Р•РЇ:" -ForegroundColor Cyan
+    Write-Host "БАТАРЕЯ:" -ForegroundColor Cyan
     if ($charge) {
         $ci = 0; [int]::TryParse($charge, [ref]$ci) | Out-Null
         $col = if ($ci -ge 80) { "Green" } elseif ($ci -ge 50) { "Yellow" } else { "Red" }
-        Write-Host ("   Р—Р°СЂСЏРґ: {0} %" -f $charge) -ForegroundColor $col
+        Write-Host ("   Заряд: {0} %" -f $charge) -ForegroundColor $col
     }
     if ($runtime) {
         $rm = [math]::Round([int]$runtime / 60, 1)
-        Write-Host ("   РћСЃС‚Р°Р»РѕСЃСЊ: {0} РјРёРЅ ({1} СЃРµРє)" -f $rm, $runtime) -ForegroundColor Yellow
+        Write-Host ("   Осталось: {0} мин ({1} сек)" -f $rm, $runtime) -ForegroundColor Yellow
     }
     if ($bVolt) {
-        $line = "   РќР°РїСЂСЏР¶РµРЅРёРµ: $bVolt Р’"
-        if ($bVoltN) { $line += " (РЅРѕРјРёРЅР°Р» $bVoltN Р’)" }
+        $line = "   Напряжение: $bVolt В"
+        if ($bVoltN) { $line += " (номинал $bVoltN В)" }
         Write-Host $line -ForegroundColor Gray
     }
 
     Write-Host ""
-    Write-Host "РџРРўРђРќРР•:" -ForegroundColor Cyan
+    Write-Host "ПИТАНИЕ:" -ForegroundColor Cyan
     if ($inV) {
-        Write-Host "   Р’С…РѕРґРЅРѕРµ:  $inV Р’" -ForegroundColor Gray
-        if ($inF) { Write-Host "   Р§Р°СЃС‚РѕС‚Р°:  $inF Р“С†" -ForegroundColor Gray }
+        Write-Host "   Входное:  $inV В" -ForegroundColor Gray
+        if ($inF) { Write-Host "   Частота:  $inF Гц" -ForegroundColor Gray }
     }
-    if ($outV) { Write-Host "   Р’С‹С…РѕРґРЅРѕРµ: $outV Р’" -ForegroundColor Gray }
+    if ($outV) { Write-Host "   Выходное: $outV В" -ForegroundColor Gray }
     if ($load) {
         $li = 0; [int]::TryParse($load, [ref]$li) | Out-Null
         $col = if ($li -le 50) { "Green" } elseif ($li -le 80) { "Yellow" } else { "Red" }
-        Write-Host "   РќР°РіСЂСѓР·РєР°: $load %" -ForegroundColor $col
+        Write-Host "   Нагрузка: $load %" -ForegroundColor $col
     }
     if ($pNom -and $pNom -ne "0") {
-        Write-Host "   РќРѕРјРёРЅР°Р»:  $pNom Р’С‚" -ForegroundColor Gray
+        Write-Host "   Номинал:  $pNom Вт" -ForegroundColor Gray
     }
     if ($test) {
         Write-Host ""
-        Write-Host "РўР•РЎРў Р‘РђРўРђР Р•Р:" -ForegroundColor Cyan
+        Write-Host "ТЕСТ БАТАРЕИ:" -ForegroundColor Cyan
         Write-Host "   $test" -ForegroundColor White
     }
 
@@ -309,13 +309,13 @@ function Show-UPSStatus {
     Write-Host "==================================================" -ForegroundColor Cyan
 }
 
-# ---------- РџРѕСЃС‚РѕСЏРЅРЅС‹Р№ РјРѕРЅРёС‚РѕСЂРёРЅРі (СЂРµР¶РёРј monitor) ----------
+# ---------- Постоянный мониторинг (режим monitor) ----------
 function Start-Monitor {
     Ensure-LogDir
-    Write-Host "=== UPS Monitor Р·Р°РїСѓС‰РµРЅ ===" -ForegroundColor Cyan
+    Write-Host "=== UPS Monitor запущен ===" -ForegroundColor Cyan
     Write-Host "NUT: ${NUT_HOST}:${NUT_PORT}  /  UPS: $UPS_NAME" -ForegroundColor Gray
-    Write-Host "Р›РѕРіРё: $LOG_DIR" -ForegroundColor Gray
-    Write-Host "РќР°Р¶РјРёС‚Рµ Ctrl+C РґР»СЏ РѕСЃС‚Р°РЅРѕРІРєРё." -ForegroundColor Gray
+    Write-Host "Логи: $LOG_DIR" -ForegroundColor Gray
+    Write-Host "Нажмите Ctrl+C для остановки." -ForegroundColor Gray
     Write-Host ""
 
     $script:LastOnlineLog = 0
@@ -324,7 +324,7 @@ function Start-Monitor {
         while ($true) {
             $vars = Get-UPSVars
             if ($vars.ContainsKey("error")) {
-                Write-Host ("[{0}] РћС€РёР±РєР°: {1}" -f (Get-Date -Format 'HH:mm:ss'), $vars["error"]) -ForegroundColor Red
+                Write-Host ("[{0}] Ошибка: {1}" -f (Get-Date -Format 'HH:mm:ss'), $vars["error"]) -ForegroundColor Red
                 Start-Sleep -Seconds 10
                 continue
             }
@@ -335,24 +335,24 @@ function Start-Monitor {
                 [int]::TryParse($vars["battery.charge"], [ref]$chargeInt) | Out-Null
             }
 
-            # РћРЅР»Р°Р№РЅ-Р»РѕРі СЂР°Р· РІ С‡Р°СЃ
+            # Онлайн-лог раз в час
             $now = Get-UnixTime
             if ($now - $script:LastOnlineLog -ge $ONLINE_LOG_INTERVAL) {
                 Write-OnlineLog -Vars $vars
-                Write-Host ("[{0}] Р—Р°РїРёСЃР°РЅ РѕРЅР»Р°Р№РЅ-Р»РѕРі." -f (Get-Date -Format 'HH:mm:ss')) -ForegroundColor DarkGray
+                Write-Host ("[{0}] Записан онлайн-лог." -f (Get-Date -Format 'HH:mm:ss')) -ForegroundColor DarkGray
                 $script:LastOnlineLog = $now
             }
 
-            # РћРїСЂРµРґРµР»СЏРµРј Р°РєС‚РёРІРЅРѕСЃС‚СЊ СЃРѕР±С‹С‚РёСЏ
+            # Определяем активность события
             $eventActive = ($currentStatus -notmatch "OL") -or ($chargeInt -lt 100)
 
             if ($eventActive -and -not $script:EventFile) {
                 Start-EventLogging -Vars $vars
-                Write-Host ("[{0}] РќРђР§РђР›Рћ РЎРћР‘Р«РўРРЇ (СЃРµС‚СЊ РїСЂРѕРїР°Р»Р° РёР»Рё Р·Р°СЂСЏРґ < 100%)" -f (Get-Date -Format 'HH:mm:ss')) -ForegroundColor Yellow
+                Write-Host ("[{0}] НАЧАЛО СОБЫТИЯ (сеть пропала или заряд < 100%)" -f (Get-Date -Format 'HH:mm:ss')) -ForegroundColor Yellow
             }
             elseif (-not $eventActive -and $script:EventFile) {
                 Stop-EventLogging -ChargeInt $chargeInt
-                Write-Host ("[{0}] РљРћРќР•Р¦ РЎРћР‘Р«РўРРЇ (РїРёС‚Р°РЅРёРµ РІРѕСЃСЃС‚Р°РЅРѕРІР»РµРЅРѕ, Р·Р°СЂСЏРґ {1}%)" -f (Get-Date -Format 'HH:mm:ss'), $chargeInt) -ForegroundColor Green
+                Write-Host ("[{0}] КОНЕЦ СОБЫТИЯ (питание восстановлено, заряд {1}%)" -f (Get-Date -Format 'HH:mm:ss'), $chargeInt) -ForegroundColor Green
             }
 
             if ($eventActive -and $script:EventFile) {
@@ -367,15 +367,15 @@ function Start-Monitor {
         }
     } finally {
         if ($script:EventFile) {
-            $endHeader = "[" + (Get-Date -Format "yyyy-MM-dd HH:mm:ss") + "] === РњРћРќРРўРћР РРќР“ РћРЎРўРђРќРћР’Р›Р•Рќ ==="
+            $endHeader = "[" + (Get-Date -Format "yyyy-MM-dd HH:mm:ss") + "] === МОНИТОРИНГ ОСТАНОВЛЕН ==="
             Write-LogLine -Path $script:EventFile -Line $endHeader
         }
         Write-Host ""
-        Write-Host "РњРѕРЅРёС‚РѕСЂРёРЅРі РѕСЃС‚Р°РЅРѕРІР»РµРЅ." -ForegroundColor Cyan
+        Write-Host "Мониторинг остановлен." -ForegroundColor Cyan
     }
 }
 
-# ---------- РўРѕС‡РєР° РІС…РѕРґР° ----------
+# ---------- Точка входа ----------
 switch ($Mode) {
     "show"    { Show-UPSStatus -Vars (Get-UPSVars) }
     "monitor" { Start-Monitor }
