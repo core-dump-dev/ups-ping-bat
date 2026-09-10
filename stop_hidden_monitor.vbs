@@ -4,7 +4,4 @@ If colProcesses.Count > 0 Then
     For Each objProcess In colProcesses
         objProcess.Terminate()
     Next
-    MsgBox "UPS Web Monitor stopped.", vbInformation, "UPS Monitor"
-Else
-    MsgBox "No running UPS monitor found.", vbInformation, "UPS Monitor"
 End If
