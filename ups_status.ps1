@@ -58,7 +58,7 @@ function Ensure-LogDir {
     }
 }
 
-function Get-UnixTime { [int](Get-Date -UFormat %s) }
+function Get-UnixTime { [int]([DateTimeOffset]::UtcNow.ToUnixTimeSeconds()) }
 
 function Write-LogLine {
     param(
