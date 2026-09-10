@@ -42,21 +42,21 @@ if (Test-Path $CfgPath) {
     }
 }
 
-$SHUTDOWN_MODE     = [int]$cfg['MODE']
-$DIALOG_TIMEOUT    = [int]$cfg['DIALOG_TIMEOUT_SEC']
-$POSTPONE_MIN      = [int]$cfg['POSTPONE_MINUTES']
-$SHUTDOWN_GRACE    = [int]$cfg['SHUTDOWN_GRACE_SEC']
-$POLL_INTERVAL     = [int]$cfg['POLL_INTERVAL']
-$NUT_HOST          = [string]$cfg['NUT_HOST']
-$NUT_PORT          = [int]$cfg['NUT_PORT']
-$UPS_NAME          = [string]$cfg['UPS_NAME']
-$WebPort           = [int]$cfg['WEB_PORT']
-$WebHost           = [string]$cfg['WEB_HOST']
-$WebRefresh        = [int]$cfg['WEB_REFRESH']
+$SHUTDOWN_MODE       = [int]$cfg['MODE']
+$DIALOG_TIMEOUT      = [int]$cfg['DIALOG_TIMEOUT_SEC']
+$POSTPONE_MIN        = [int]$cfg['POSTPONE_MINUTES']
+$SHUTDOWN_GRACE      = [int]$cfg['SHUTDOWN_GRACE_SEC']
+$POLL_INTERVAL       = [int]$cfg['POLL_INTERVAL']
+$NUT_HOST            = [string]$cfg['NUT_HOST']
+$NUT_PORT            = [int]$cfg['NUT_PORT']
+$UPS_NAME            = [string]$cfg['UPS_NAME']
+$WebPort             = [int]$cfg['WEB_PORT']
+$WebHost             = [string]$cfg['WEB_HOST']
+$WebRefresh          = [int]$cfg['WEB_REFRESH']
 $ONLINE_LOG_INTERVAL = [int]$cfg['ONLINE_LOG_INTERVAL']
 $EVENT_LOG_INTERVAL  = [int]$cfg['EVENT_LOG_INTERVAL']
-$MAX_FILE_SIZE     = [int]$cfg['MAX_FILE_SIZE_MB'] * 1MB
-$MAX_TOTAL_SIZE    = [int]$cfg['MAX_TOTAL_SIZE_MB'] * 1MB
+$MAX_FILE_SIZE       = [int]$cfg['MAX_FILE_SIZE_MB'] * 1MB
+$MAX_TOTAL_SIZE      = [int]$cfg['MAX_TOTAL_SIZE_MB'] * 1MB
 
 $ONLINE_FILE_NAME  = "ups_online.txt"
 $EVENT_FILE_PREFIX = "ups_power_event"
@@ -86,7 +86,6 @@ $script:LastEventWrite        = 0
 $script:OnBatterySince        = $null
 $script:ShutdownPostponedTill = $null
 $script:ShutdownIssued        = $false
-$script:LastStatusForLog      = ""
 
 # ================================================================
 # 3. UTILITIES
@@ -252,7 +251,7 @@ function Get-UPSVars {
 }
 
 # ================================================================
-# 5. SHUTDOWN DIALOG (WinForms, always-on-top)
+# 5. SHUTDOWN DIALOG
 # ================================================================
 function Show-ShutdownDialog {
     param(
@@ -330,7 +329,6 @@ function Show-ShutdownDialog {
     $btnPost.Font = New-Object System.Drawing.Font("Segoe UI", 11, [System.Drawing.FontStyle]::Bold)
     $form.Controls.Add($btnPost)
 
-    # Shared state (script scope so the timer's scriptblock can see it)
     $script:dialogRemaining = $TimeoutSec
     $script:dialogResult    = "timeout"
 
@@ -365,7 +363,6 @@ function Show-ShutdownDialog {
     $form.Add_FormClosing({
         param($s, $e)
         if ($script:dialogResult -eq "timeout") {
-            # User closed via X / Alt+F4 -- treat as postpone
             $script:dialogResult = "postpone"
             $timer.Stop()
         }
@@ -400,7 +397,6 @@ function Invoke-ShutdownCheck {
 
     $onBattery = ($statusRaw -match "OB")
 
-    # --- Reset when back on AC ---
     if (-not $onBattery) {
         if ($null -ne $script:OnBatterySince) {
             Write-Host ("[{0}] AC restored. Shutdown state reset." -f (Get-Date -Format 'HH:mm:ss')) -ForegroundColor Green
@@ -411,7 +407,6 @@ function Invoke-ShutdownCheck {
         return
     }
 
-    # --- Track time on battery ---
     if ($null -eq $script:OnBatterySince) {
         $script:OnBatterySince = Get-Date
         Write-Host ("[{0}] On battery since {1}." -f (Get-Date -Format 'HH:mm:ss'), $script:OnBatterySince.ToString('HH:mm:ss')) -ForegroundColor Yellow
@@ -419,7 +414,6 @@ function Invoke-ShutdownCheck {
 
     if ($script:ShutdownIssued) { return }
 
-    # --- Evaluate trigger condition ---
     $trigger = $false
     $reason  = ""
     $onBattMin = ((Get-Date) - $script:OnBatterySince).TotalMinutes
@@ -444,14 +438,11 @@ function Invoke-ShutdownCheck {
 
     if (-not $trigger) { return }
 
-    # --- Check postpone ---
     $now = Get-Date
     if ($null -ne $script:ShutdownPostponedTill -and $now -lt $script:ShutdownPostponedTill) {
-        $left = [int]($script:ShutdownPostponedTill - $now).TotalMinutes
         return
     }
 
-    # --- Show dialog ---
     $modeText = switch ($SHUTDOWN_MODE) {
         1 { "1 min on battery" }
         2 { "5 min on battery" }
@@ -530,7 +521,6 @@ function Invoke-LoggerIteration {
         }
     }
 
-    # --- SHUTDOWN LOGIC ---
     Invoke-ShutdownCheck -Vars $Vars
 }
 
@@ -545,6 +535,7 @@ function Get-HtmlPage {
 <head>
 <meta charset="utf-8">
 <title>UPS Status</title>
+<link id="favicon" rel="icon" type="image/png" href="/sphere-green.png">
 <style>
   body { font-family: 'Segoe UI', Tahoma, sans-serif; background: #1e1e2e; color: #eee; margin: 0; padding: 20px; }
   h1 { color: #89dceb; margin: 0 0 4px 0; }
@@ -589,6 +580,20 @@ function Get-HtmlPage {
 const REFRESH = $RefreshSec * 1000;
 function fmtRuntime(sec){sec=parseInt(sec);if(isNaN(sec))return '-';return Math.floor(sec/60)+' min '+(sec%60)+' s';}
 function setCard(id,cls){document.getElementById(id).className='card'+(cls?' '+cls:'');}
+function updateFaviconAndTitle(status, charge, statusText){
+  let icon = 'sphere-green.png';
+  if (status.includes('OB')) {
+    icon = 'sphere-red.png';
+  } else if (status.includes('OL')) {
+    if (isNaN(charge)) { icon = 'sphere-green.png'; }
+    else if (charge < 25) { icon = 'sphere-magenta.png'; }
+    else if (charge < 90) { icon = 'sphere-orange.png'; }
+    else { icon = 'sphere-green.png'; }
+  }
+  document.getElementById('favicon').href = '/' + icon;
+  const title = isNaN(charge) ? '(' + (statusText || '?') + ')' : '(' + charge + '%) ' + (statusText || '');
+  document.title = title;
+}
 function updateUI(data){
   const errEl=document.getElementById('error');
   if(data.error){errEl.style.display='block';errEl.textContent='Error: '+data.error;return;}
@@ -613,6 +618,7 @@ function updateUI(data){
   const tbody=document.querySelector('#full-table tbody');tbody.innerHTML='';
   const keys=Object.keys(data).sort();
   for(const k of keys){const tr=document.createElement('tr');const td1=document.createElement('td');td1.textContent=k;const td2=document.createElement('td');td2.textContent=data[k];tr.appendChild(td1);tr.appendChild(td2);tbody.appendChild(tr);}
+  updateFaviconAndTitle(status, charge, statusText);
   document.getElementById('last-update').textContent=new Date().toLocaleTimeString();
   document.getElementById('footer').textContent='Parameters: '+keys.length;
 }
@@ -640,7 +646,21 @@ function Send-HttpResponse {
 
 function Handle-Request {
     param([System.Net.HttpListenerContext]$Context)
+
     $path = $Context.Request.Url.AbsolutePath
+
+    # --- Serve favicon PNGs from script folder ---
+    if ($path -match "^/sphere-(green|orange|red|magenta)\.png$") {
+        $imgPath = Join-Path $ScriptDir $path.TrimStart('/')
+        if (Test-Path $imgPath) {
+            $bytes = [System.IO.File]::ReadAllBytes($imgPath)
+            Send-HttpResponse -Context $Context -StatusCode 200 -ContentType "image/png" -Body $bytes
+        } else {
+            Send-HttpResponse -Context $Context -StatusCode 404 -ContentType "text/plain; charset=utf-8" -Body ([System.Text.Encoding]::UTF8.GetBytes("Not found"))
+        }
+        return
+    }
+
     if ($path -eq "/api/status") {
         $vars = Get-UPSVars
         $json = $vars | ConvertTo-Json -Compress -Depth 3
@@ -648,12 +668,14 @@ function Handle-Request {
         Send-HttpResponse -Context $Context -StatusCode 200 -ContentType "application/json; charset=utf-8" -Body $bytes
         return
     }
+
     if ($path -eq "/" -or $path -eq "/index.html") {
         $html = Get-HtmlPage -RefreshSec $WebRefresh
         $bytes = [System.Text.Encoding]::UTF8.GetBytes($html)
         Send-HttpResponse -Context $Context -StatusCode 200 -ContentType "text/html; charset=utf-8" -Body $bytes
         return
     }
+
     Send-HttpResponse -Context $Context -StatusCode 404 -ContentType "text/plain; charset=utf-8" -Body ([System.Text.Encoding]::UTF8.GetBytes("Not found"))
 }
 
@@ -763,7 +785,7 @@ function Start-WebMonitor {
         Write-Host "Reason: $($_.Exception.Message)" -ForegroundColor Red
         Write-Host ""
         Write-Host "Try as admin once:" -ForegroundColor Yellow
-        Write-Host "  netsh http add urlacl url=http://+:${WebPort}/ user=$env:USERNAME" -ForegroundColor Yellow
+        Write-Host "  netsh http add urlacl url=http://+:${WebPort}/ sddl=D:(A;;GX;;;S-1-1-0)" -ForegroundColor Yellow
         return
     }
     Write-Host "==================================================" -ForegroundColor Cyan
