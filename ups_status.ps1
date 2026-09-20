@@ -121,7 +121,12 @@ function Format-LogLine {
     $load = if ($Vars.ContainsKey("ups.load")) { $Vars["ups.load"] }        else { "?" }
     $inV = if ($Vars.ContainsKey("input.voltage")) { $Vars["input.voltage"] }   else { "?" }
     $outV = if ($Vars.ContainsKey("output.voltage")) { $Vars["output.voltage"] }  else { "?" }
-    return "[$ts] Status`t$st`tCharge`t$charge %`tRuntime`t$runtime s`tLoad`t$load %`tInput`t$inV V`tOutput`t$outV V"
+    $pNom = if ($Vars.ContainsKey("ups.realpower.nominal")) { $Vars["ups.realpower.nominal"] } else { "?" }
+    $watts = "?"
+    if ($load -ne "?" -and $pNom -ne "?" -and $pNom -ne "0") {
+        $watts = [math]::Round(([double]$load / 100.0) * [double]$pNom)
+    }
+    return "[$ts] Status`t$st`tCharge`t$charge %`tRuntime`t$runtime s`tLoad`t$load %`tWatts`t$watts W`tInput`t$inV V`tOutput`t$outV V"
 }
 
 function Rotate-FileIfNeeded {
@@ -551,9 +556,11 @@ function Get-HtmlPage {
   .card.green { border-color: #a6e3a1; }
   .card.yellow { border-color: #f9e2af; }
   .card.red { border-color: #f38ba8; }
+  .card.magenta { border-color: #cba6f7; }
   .label { color: #888; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
   .value { font-size: 22px; font-weight: 600; margin-top: 4px; }
   .value.small { font-size: 16px; }
+  .value .hint { font-size: 12px; color: #888; font-weight: 400; }
   details { margin-top: 24px; max-width: 1100px; background: #2a2a3e; border-radius: 8px; padding: 12px 18px; }
   summary { cursor: pointer; font-weight: 600; color: #cba6f7; }
   table { border-collapse: collapse; width: 100%; margin-top: 12px; font-size: 13px; }
@@ -572,6 +579,7 @@ function Get-HtmlPage {
     <div class="card" id="c-charge"><div class="label">Battery charge</div><div class="value" id="v-charge">-</div></div>
     <div class="card" id="c-runtime"><div class="label">Runtime left</div><div class="value" id="v-runtime">-</div></div>
     <div class="card" id="c-load"><div class="label">Load</div><div class="value" id="v-load">-</div></div>
+    <div class="card" id="c-usage"><div class="label">Estimated usage</div><div class="value" id="v-usage">-</div></div>
     <div class="card"><div class="label">Input voltage</div><div class="value small" id="v-input">-</div></div>
     <div class="card"><div class="label">Output voltage</div><div class="value small" id="v-output">-</div></div>
     <div class="card"><div class="label">Model</div><div class="value small" id="v-model">-</div></div>
@@ -612,11 +620,11 @@ function setErrorState(msg) {
   setFavicon('error.png');
   document.title = '(!) UPS unreachable';
 
-  // reset cards
   document.getElementById('v-status').textContent  = '-';
   document.getElementById('v-charge').textContent  = '-';
   document.getElementById('v-runtime').textContent = '-';
   document.getElementById('v-load').textContent    = '-';
+  document.getElementById('v-usage').textContent   = '-';
   document.getElementById('v-input').textContent   = '-';
   document.getElementById('v-output').textContent  = '-';
   document.getElementById('v-model').textContent   = '-';
@@ -624,6 +632,7 @@ function setErrorState(msg) {
   setCard('c-status', 'red');
   setCard('c-charge', '');
   setCard('c-load', '');
+  setCard('c-usage', '');
 
   document.querySelector('#full-table tbody').innerHTML = '';
   document.getElementById('footer').textContent = '';
@@ -651,8 +660,23 @@ function updateUI(data){
   setCard('c-charge', cc);
 
   document.getElementById('v-runtime').textContent = fmtRuntime(data['battery.runtime']);
-  document.getElementById('v-load').textContent = (data['ups.load'] || '-') + ' %';
-  setCard('c-load', parseInt(data['ups.load']) > 80 ? 'red' : '');
+
+  const loadPct = parseFloat(data['ups.load']);
+  document.getElementById('v-load').textContent = isNaN(loadPct) ? '-' : loadPct + ' %';
+  setCard('c-load', loadPct > 80 ? 'red' : (loadPct > 50 ? 'yellow' : 'green'));
+
+  // --- Estimated usage in Watts ---
+  const nominalW = parseFloat(data['ups.realpower.nominal']);
+  if (!isNaN(loadPct) && !isNaN(nominalW) && nominalW > 0) {
+    const usageW = Math.round((loadPct / 100) * nominalW);
+    document.getElementById('v-usage').innerHTML =
+      usageW + ' W <span class="hint">of ' + Math.round(nominalW) + ' W</span>';
+    const usagePct = (usageW / nominalW) * 100;
+    setCard('c-usage', usagePct > 80 ? 'red' : (usagePct > 50 ? 'yellow' : 'green'));
+  } else {
+    document.getElementById('v-usage').textContent = '-';
+    setCard('c-usage', '');
+  }
 
   document.getElementById('v-input').textContent  = (data['input.voltage']  || '-') + ' V';
   document.getElementById('v-output').textContent = (data['output.voltage'] || '-') + ' V';
@@ -661,8 +685,8 @@ function updateUI(data){
   const model = data['device.model'] || '-';
   document.getElementById('v-model').textContent = (mfr + ' ' + model).trim();
 
-  const pnom = data['ups.realpower.nominal'];
-  document.getElementById('v-power').textContent = (pnom && pnom !== '0') ? pnom + ' W' : '-';
+  document.getElementById('v-power').textContent =
+    (!isNaN(nominalW) && nominalW > 0) ? Math.round(nominalW) + ' W' : '-';
 
   const tbody = document.querySelector('#full-table tbody');
   tbody.innerHTML = '';
@@ -715,7 +739,6 @@ function Handle-Request {
 
     $path = $Context.Request.Url.AbsolutePath
 
-    # --- Serve favicon PNGs from script folder ---
     if ($path -match "^/(sphere-(green|orange|red|magenta)|error)\.png$") {
         $imgPath = Join-Path $ScriptDir $path.TrimStart('/')
         if (Test-Path $imgPath) {
@@ -807,8 +830,11 @@ function Show-UPSStatus {
         $li = 0; [int]::TryParse($load, [ref]$li) | Out-Null
         $col = if ($li -le 50) { "Green" } elseif ($li -le 80) { "Yellow" } else { "Red" }
         Write-Host "   Load:       $load %" -ForegroundColor $col
+        if ($pNom -and $pNom -ne "0") {
+            $w = [math]::Round(([double]$load / 100.0) * [double]$pNom)
+            Write-Host "   Estimated:  $w W (nominal $pNom W)" -ForegroundColor Gray
+        }
     }
-    if ($pNom -and $pNom -ne "0") { Write-Host "   Nominal:    $pNom W" -ForegroundColor Gray }
     Write-Host ""
     Write-Host "==================================================" -ForegroundColor Cyan
 }
