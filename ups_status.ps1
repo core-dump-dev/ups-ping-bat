@@ -112,21 +112,52 @@ function Write-LogLine {
 function Format-LogLine {
     param([hashtable]$Vars)
     $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+
+    # --- Status ---
     $sr = if ($Vars.ContainsKey("ups.status")) { $Vars["ups.status"] } else { "" }
-    if ($sr -match "OL") { $st = "OnLine" }
-    elseif ($sr -match "OB") { $st = "OnBattery" }
-    else { $st = $sr }
-    $charge = if ($Vars.ContainsKey("battery.charge")) { $Vars["battery.charge"] }  else { "?" }
-    $runtime = if ($Vars.ContainsKey("battery.runtime")) { $Vars["battery.runtime"] } else { "?" }
-    $load = if ($Vars.ContainsKey("ups.load")) { $Vars["ups.load"] }        else { "?" }
-    $inV = if ($Vars.ContainsKey("input.voltage")) { $Vars["input.voltage"] }   else { "?" }
-    $outV = if ($Vars.ContainsKey("output.voltage")) { $Vars["output.voltage"] }  else { "?" }
-    $pNom = if ($Vars.ContainsKey("ups.realpower.nominal")) { $Vars["ups.realpower.nominal"] } else { "?" }
+    if ($sr -match "OL")      { $st = "OnLine" }
+    elseif ($sr -match "OB")  { $st = "OnBattery" }
+    else                      { $st = $sr }
+
+    # --- Основные значения ---
+    $charge  = if ($Vars.ContainsKey("battery.charge"))        { $Vars["battery.charge"] }        else { "?" }
+    $runtime = if ($Vars.ContainsKey("battery.runtime"))       { $Vars["battery.runtime"] }       else { "?" }
+    $load    = if ($Vars.ContainsKey("ups.load"))              { $Vars["ups.load"] }              else { "?" }
+    $inV     = if ($Vars.ContainsKey("input.voltage"))         { $Vars["input.voltage"] }         else { $null }
+    $outV    = if ($Vars.ContainsKey("output.voltage"))        { $Vars["output.voltage"] }        else { $null }
+    $inF     = if ($Vars.ContainsKey("input.frequency"))       { $Vars["input.frequency"] }       else { $null }
+    $pNom    = if ($Vars.ContainsKey("ups.realpower.nominal")) { $Vars["ups.realpower.nominal"] } else { $null }
+
+    # --- Расчёт потребления в Ваттах ---
     $watts = "?"
-    if ($load -ne "?" -and $pNom -ne "?" -and $pNom -ne "0") {
+    if ($load -ne "?" -and $pNom -and $pNom -ne "0" -and $pNom -ne "?") {
         $watts = [math]::Round(([double]$load / 100.0) * [double]$pNom)
     }
-    return "[$ts] Status`t$st`tCharge`t$charge %`tRuntime`t$runtime s`tLoad`t$load %`tWatts`t$watts W`tInput`t$inV V`tOutput`t$outV V"
+
+    # --- Расчёт состояния AVR ---
+    # Boost  = ИБП повышает напряжение (сеть просела)
+    # Trim   = ИБП понижает напряжение (сеть завышена)
+    # Normal = пропускает как есть
+    $avr = "?"
+    if ($inV -and $outV) {
+        $diff = [double]$outV - [double]$inV
+        if ($diff -gt 10)       { $avr = "Boost" }
+        elseif ($diff -lt -10)  { $avr = "Trim" }
+        else                    { $avr = "Normal" }
+    }
+
+    # --- Сборка строки ---
+    $line = "[$ts] Status`t$st" +
+            "`tCharge`t$charge %" +
+            "`tRuntime`t$runtime s" +
+            "`tLoad`t$load %" +
+            "`tUsage`t$watts W of $pNom W"
+    if ($inV)         { $line += "`tIn`t$inV V" }
+    if ($outV)        { $line += "`tOut`t$outV V" }
+    if ($avr -ne "?") { $line += "`tAVR`t$avr" }
+    if ($inF)         { $line += "`tFreq`t$inF Hz" }
+
+    return $line
 }
 
 function Rotate-FileIfNeeded {
