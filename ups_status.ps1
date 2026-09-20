@@ -26,8 +26,8 @@ $cfg = @{
     WEB_REFRESH         = 5
     ONLINE_LOG_INTERVAL = 3600
     EVENT_LOG_INTERVAL  = 5
-    MAX_FILE_SIZE_MB    = 50
-    MAX_TOTAL_SIZE_MB   = 500
+    MAX_FILE_SIZE_MB    = 1
+    MAX_TOTAL_SIZE_MB   = 10
 }
 
 if (Test-Path $CfgPath) {
@@ -81,6 +81,7 @@ $UPS_VARS = @(
 # 2. STATE
 # ================================================================
 $script:LastOnlineLog = 0
+$script:LastCleanup = 0
 $script:EventFile = $null
 $script:LastEventWrite = 0
 $script:OnBatterySince = $null
@@ -113,49 +114,41 @@ function Format-LogLine {
     param([hashtable]$Vars)
     $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
 
-    # --- Status ---
     $sr = if ($Vars.ContainsKey("ups.status")) { $Vars["ups.status"] } else { "" }
-    if ($sr -match "OL")      { $st = "OnLine" }
-    elseif ($sr -match "OB")  { $st = "OnBattery" }
-    else                      { $st = $sr }
+    if ($sr -match "OL") { $st = "OnLine" }
+    elseif ($sr -match "OB") { $st = "OnBattery" }
+    else { $st = $sr }
 
-    # --- Основные значения ---
-    $charge  = if ($Vars.ContainsKey("battery.charge"))        { $Vars["battery.charge"] }        else { "?" }
-    $runtime = if ($Vars.ContainsKey("battery.runtime"))       { $Vars["battery.runtime"] }       else { "?" }
-    $load    = if ($Vars.ContainsKey("ups.load"))              { $Vars["ups.load"] }              else { "?" }
-    $inV     = if ($Vars.ContainsKey("input.voltage"))         { $Vars["input.voltage"] }         else { $null }
-    $outV    = if ($Vars.ContainsKey("output.voltage"))        { $Vars["output.voltage"] }        else { $null }
-    $inF     = if ($Vars.ContainsKey("input.frequency"))       { $Vars["input.frequency"] }       else { $null }
-    $pNom    = if ($Vars.ContainsKey("ups.realpower.nominal")) { $Vars["ups.realpower.nominal"] } else { $null }
+    $charge = if ($Vars.ContainsKey("battery.charge")) { $Vars["battery.charge"] }        else { "?" }
+    $runtime = if ($Vars.ContainsKey("battery.runtime")) { $Vars["battery.runtime"] }       else { "?" }
+    $load = if ($Vars.ContainsKey("ups.load")) { $Vars["ups.load"] }              else { "?" }
+    $inV = if ($Vars.ContainsKey("input.voltage")) { $Vars["input.voltage"] }         else { $null }
+    $outV = if ($Vars.ContainsKey("output.voltage")) { $Vars["output.voltage"] }        else { $null }
+    $inF = if ($Vars.ContainsKey("input.frequency")) { $Vars["input.frequency"] }       else { $null }
+    $pNom = if ($Vars.ContainsKey("ups.realpower.nominal")) { $Vars["ups.realpower.nominal"] } else { $null }
 
-    # --- Расчёт потребления в Ваттах ---
     $watts = "?"
     if ($load -ne "?" -and $pNom -and $pNom -ne "0" -and $pNom -ne "?") {
         $watts = [math]::Round(([double]$load / 100.0) * [double]$pNom)
     }
 
-    # --- Расчёт состояния AVR ---
-    # Boost  = ИБП повышает напряжение (сеть просела)
-    # Trim   = ИБП понижает напряжение (сеть завышена)
-    # Normal = пропускает как есть
     $avr = "?"
     if ($inV -and $outV) {
         $diff = [double]$outV - [double]$inV
-        if ($diff -gt 10)       { $avr = "Boost" }
-        elseif ($diff -lt -10)  { $avr = "Trim" }
-        else                    { $avr = "Normal" }
+        if ($diff -gt 10) { $avr = "Boost" }
+        elseif ($diff -lt -10) { $avr = "Trim" }
+        else { $avr = "Normal" }
     }
 
-    # --- Сборка строки ---
     $line = "[$ts] Status`t$st" +
-            "`tCharge`t$charge %" +
-            "`tRuntime`t$runtime s" +
-            "`tLoad`t$load %" +
-            "`tUsage`t$watts W of $pNom W"
-    if ($inV)         { $line += "`tIn`t$inV V" }
-    if ($outV)        { $line += "`tOut`t$outV V" }
+    "`tCharge`t$charge %" +
+    "`tRuntime`t$runtime s" +
+    "`tLoad`t$load %" +
+    "`tUsage`t$watts W of $pNom W"
+    if ($inV) { $line += "`tIn`t$inV V" }
+    if ($outV) { $line += "`tOut`t$outV V" }
     if ($avr -ne "?") { $line += "`tAVR`t$avr" }
-    if ($inF)         { $line += "`tFreq`t$inF Hz" }
+    if ($inF) { $line += "`tFreq`t$inF Hz" }
 
     return $line
 }
@@ -174,17 +167,34 @@ function Rotate-FileIfNeeded {
     return $Path
 }
 
-function Cleanup-OldEventFiles {
-    $pattern = Join-Path $LOG_DIR "$EVENT_FILE_PREFIX*.txt"
-    $files = @(Get-ChildItem -Path $pattern -ErrorAction SilentlyContinue | Sort-Object CreationTime)
-    if ($files.Count -eq 0) { return }
-    $total = ($files | Measure-Object -Property Length -Sum).Sum
-    while ($total -gt $MAX_TOTAL_SIZE -and $files.Count -gt 0) {
-        $oldest = $files[0]
+function Cleanup-AllLogs {
+    $patterns = @(
+        (Join-Path $LOG_DIR "ups_online_*.txt"),
+        (Join-Path $LOG_DIR "ups_power_event_*.txt")
+    )
+    $all = @()
+    foreach ($p in $patterns) {
+        $all += @(Get-ChildItem -Path $p -ErrorAction SilentlyContinue)
+    }
+
+    # Не трогаем активный событийный файл
+    if ($script:EventFile) {
+        $active = (Get-Item $script:EventFile -ErrorAction SilentlyContinue).FullName
+        if ($active) {
+            $all = $all | Where-Object { $_.FullName -ne $active }
+        }
+    }
+
+    $all = @($all | Sort-Object CreationTime)
+    if ($all.Count -eq 0) { return }
+
+    $total = ($all | Measure-Object -Property Length -Sum).Sum
+    while ($total -gt $MAX_TOTAL_SIZE -and $all.Count -gt 0) {
+        $oldest = $all[0]
         $total -= $oldest.Length
         Remove-Item -Path $oldest.FullName -Force -ErrorAction SilentlyContinue
-        if ($files.Count -le 1) { break }
-        $files = $files[1..($files.Count - 1)]
+        if ($all.Count -le 1) { break }
+        $all = $all[1..($all.Count - 1)]
     }
 }
 
@@ -215,7 +225,7 @@ function Stop-EventLogging {
         $endHeader = "[" + (Get-Date -Format "yyyy-MM-dd HH:mm:ss") + "] === EVENT END (power restored, charge ${ChargeInt}%) ==="
         Write-LogLine -Path $script:EventFile -Line $endHeader
         $script:EventFile = $null
-        Cleanup-OldEventFiles
+        Cleanup-AllLogs
     }
 }
 
@@ -538,17 +548,26 @@ function Invoke-LoggerIteration {
     }
 
     $now = Get-UnixTime
+
+    # Онлайн-лог раз в час
     if ($now - $script:LastOnlineLog -ge $ONLINE_LOG_INTERVAL) {
         Write-OnlineLog -Vars $Vars
         Write-Host ("[{0}] Online log written." -f (Get-Date -Format 'HH:mm:ss')) -ForegroundColor DarkGray
         $script:LastOnlineLog = $now
     }
 
-    $eventActive = ($currentStatus -notmatch "OL") -or ($chargeInt -lt 100)
+    # Раз в час чистим старые ротации
+    if ($now - $script:LastCleanup -ge 3600) {
+        Cleanup-AllLogs
+        $script:LastCleanup = $now
+    }
+
+    # Событие — только когда на батарее (OB)
+    $eventActive = ($currentStatus -match "OB")
 
     if ($eventActive -and -not $script:EventFile) {
         Start-EventLogging -Vars $Vars
-        Write-Host ("[{0}] EVENT START (power lost or charge < 100%%)" -f (Get-Date -Format 'HH:mm:ss')) -ForegroundColor Yellow
+        Write-Host ("[{0}] EVENT START (on battery)" -f (Get-Date -Format 'HH:mm:ss')) -ForegroundColor Yellow
     }
     elseif (-not $eventActive -and $script:EventFile) {
         Stop-EventLogging -ChargeInt $chargeInt
@@ -556,10 +575,9 @@ function Invoke-LoggerIteration {
     }
 
     if ($eventActive -and $script:EventFile) {
-        $now2 = Get-UnixTime
-        if ($now2 - $script:LastEventWrite -ge $EVENT_LOG_INTERVAL) {
+        if ($now - $script:LastEventWrite -ge $EVENT_LOG_INTERVAL) {
             Write-EventLog -Vars $Vars
-            $script:LastEventWrite = $now2
+            $script:LastEventWrite = $now
         }
     }
 
@@ -611,6 +629,7 @@ function Get-HtmlPage {
     <div class="card" id="c-runtime"><div class="label">Runtime left</div><div class="value" id="v-runtime">-</div></div>
     <div class="card" id="c-load"><div class="label">Load</div><div class="value" id="v-load">-</div></div>
     <div class="card" id="c-usage"><div class="label">Estimated usage</div><div class="value" id="v-usage">-</div></div>
+    <div class="card" id="c-avr"><div class="label">AVR state</div><div class="value small" id="v-avr">-</div></div>
     <div class="card"><div class="label">Input voltage</div><div class="value small" id="v-input">-</div></div>
     <div class="card"><div class="label">Output voltage</div><div class="value small" id="v-output">-</div></div>
     <div class="card"><div class="label">Model</div><div class="value small" id="v-model">-</div></div>
@@ -656,6 +675,7 @@ function setErrorState(msg) {
   document.getElementById('v-runtime').textContent = '-';
   document.getElementById('v-load').textContent    = '-';
   document.getElementById('v-usage').textContent   = '-';
+  document.getElementById('v-avr').textContent     = '-';
   document.getElementById('v-input').textContent   = '-';
   document.getElementById('v-output').textContent  = '-';
   document.getElementById('v-model').textContent   = '-';
@@ -664,6 +684,7 @@ function setErrorState(msg) {
   setCard('c-charge', '');
   setCard('c-load', '');
   setCard('c-usage', '');
+  setCard('c-avr', '');
 
   document.querySelector('#full-table tbody').innerHTML = '';
   document.getElementById('footer').textContent = '';
@@ -696,7 +717,6 @@ function updateUI(data){
   document.getElementById('v-load').textContent = isNaN(loadPct) ? '-' : loadPct + ' %';
   setCard('c-load', loadPct > 80 ? 'red' : (loadPct > 50 ? 'yellow' : 'green'));
 
-  // --- Estimated usage in Watts ---
   const nominalW = parseFloat(data['ups.realpower.nominal']);
   if (!isNaN(loadPct) && !isNaN(nominalW) && nominalW > 0) {
     const usageW = Math.round((loadPct / 100) * nominalW);
@@ -707,6 +727,23 @@ function updateUI(data){
   } else {
     document.getElementById('v-usage').textContent = '-';
     setCard('c-usage', '');
+  }
+
+  // AVR state из разницы In / Out
+  const inV  = parseFloat(data['input.voltage']);
+  const outV = parseFloat(data['output.voltage']);
+  const avrEl = document.getElementById('v-avr');
+  if (!isNaN(inV) && !isNaN(outV)) {
+    const diff = outV - inV;
+    let avrText, avrCls;
+    if (diff > 10)       { avrText = 'Boost (raising)';  avrCls = 'yellow'; }
+    else if (diff < -10) { avrText = 'Trim (lowering)';  avrCls = 'yellow'; }
+    else                 { avrText = 'Normal';           avrCls = 'green';  }
+    avrEl.textContent = avrText + '  (' + (diff >= 0 ? '+' : '') + diff.toFixed(1) + ' V)';
+    setCard('c-avr', avrCls);
+  } else {
+    avrEl.textContent = '-';
+    setCard('c-avr', '');
   }
 
   document.getElementById('v-input').textContent  = (data['input.voltage']  || '-') + ' V';
@@ -857,13 +894,18 @@ function Show-UPSStatus {
         if ($inF) { Write-Host "   Frequency:  $inF Hz" -ForegroundColor Gray }
     }
     if ($outV) { Write-Host "   Output:     $outV V" -ForegroundColor Gray }
+    if ($inV -and $outV) {
+        $diff = [double]$outV - [double]$inV
+        $avr = if ($diff -gt 10) { "Boost" } elseif ($diff -lt -10) { "Trim" } else { "Normal" }
+        Write-Host ("   AVR:        {0} ({1:+0.0;-0.0;0} V)" -f $avr, $diff) -ForegroundColor Gray
+    }
     if ($load) {
         $li = 0; [int]::TryParse($load, [ref]$li) | Out-Null
         $col = if ($li -le 50) { "Green" } elseif ($li -le 80) { "Yellow" } else { "Red" }
         Write-Host "   Load:       $load %" -ForegroundColor $col
         if ($pNom -and $pNom -ne "0") {
             $w = [math]::Round(([double]$load / 100.0) * [double]$pNom)
-            Write-Host "   Estimated:  $w W (nominal $pNom W)" -ForegroundColor Gray
+            Write-Host "   Usage:      $w W of $pNom W" -ForegroundColor Gray
         }
     }
     Write-Host ""
