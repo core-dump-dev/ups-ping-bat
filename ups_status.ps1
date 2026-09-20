@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 [CmdletBinding()]
 param(
-    [ValidateSet("show","monitor","web")]
+    [ValidateSet("show", "monitor", "web")]
     [string]$Mode = "web"
 )
 
@@ -9,25 +9,25 @@ param(
 # 1. LOAD CONFIG
 # ================================================================
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$CfgPath   = Join-Path $ScriptDir "ups_shutdown.cfg"
-$LOG_DIR   = Join-Path $ScriptDir "logs"
+$CfgPath = Join-Path $ScriptDir "ups_shutdown.cfg"
+$LOG_DIR = Join-Path $ScriptDir "logs"
 
 $cfg = @{
-    MODE                 = 1
-    DIALOG_TIMEOUT_SEC   = 60
-    POSTPONE_MINUTES     = 5
-    SHUTDOWN_GRACE_SEC   = 10
-    POLL_INTERVAL        = 5
-    NUT_HOST             = "192.168.0.15"
-    NUT_PORT             = 3493
-    UPS_NAME             = "ups"
-    WEB_PORT             = 9921
-    WEB_HOST             = "localhost"
-    WEB_REFRESH          = 5
-    ONLINE_LOG_INTERVAL  = 3600
-    EVENT_LOG_INTERVAL   = 5
-    MAX_FILE_SIZE_MB     = 50
-    MAX_TOTAL_SIZE_MB    = 500
+    MODE                = 1
+    DIALOG_TIMEOUT_SEC  = 60
+    POSTPONE_MINUTES    = 5
+    SHUTDOWN_GRACE_SEC  = 10
+    POLL_INTERVAL       = 5
+    NUT_HOST            = "192.168.0.15"
+    NUT_PORT            = 3493
+    UPS_NAME            = "ups"
+    WEB_PORT            = 9921
+    WEB_HOST            = "localhost"
+    WEB_REFRESH         = 5
+    ONLINE_LOG_INTERVAL = 3600
+    EVENT_LOG_INTERVAL  = 5
+    MAX_FILE_SIZE_MB    = 50
+    MAX_TOTAL_SIZE_MB   = 500
 }
 
 if (Test-Path $CfgPath) {
@@ -42,50 +42,50 @@ if (Test-Path $CfgPath) {
     }
 }
 
-$SHUTDOWN_MODE       = [int]$cfg['MODE']
-$DIALOG_TIMEOUT      = [int]$cfg['DIALOG_TIMEOUT_SEC']
-$POSTPONE_MIN        = [int]$cfg['POSTPONE_MINUTES']
-$SHUTDOWN_GRACE      = [int]$cfg['SHUTDOWN_GRACE_SEC']
-$POLL_INTERVAL       = [int]$cfg['POLL_INTERVAL']
-$NUT_HOST            = [string]$cfg['NUT_HOST']
-$NUT_PORT            = [int]$cfg['NUT_PORT']
-$UPS_NAME            = [string]$cfg['UPS_NAME']
-$WebPort             = [int]$cfg['WEB_PORT']
-$WebHost             = [string]$cfg['WEB_HOST']
-$WebRefresh          = [int]$cfg['WEB_REFRESH']
+$SHUTDOWN_MODE = [int]$cfg['MODE']
+$DIALOG_TIMEOUT = [int]$cfg['DIALOG_TIMEOUT_SEC']
+$POSTPONE_MIN = [int]$cfg['POSTPONE_MINUTES']
+$SHUTDOWN_GRACE = [int]$cfg['SHUTDOWN_GRACE_SEC']
+$POLL_INTERVAL = [int]$cfg['POLL_INTERVAL']
+$NUT_HOST = [string]$cfg['NUT_HOST']
+$NUT_PORT = [int]$cfg['NUT_PORT']
+$UPS_NAME = [string]$cfg['UPS_NAME']
+$WebPort = [int]$cfg['WEB_PORT']
+$WebHost = [string]$cfg['WEB_HOST']
+$WebRefresh = [int]$cfg['WEB_REFRESH']
 $ONLINE_LOG_INTERVAL = [int]$cfg['ONLINE_LOG_INTERVAL']
-$EVENT_LOG_INTERVAL  = [int]$cfg['EVENT_LOG_INTERVAL']
-$MAX_FILE_SIZE       = [int]$cfg['MAX_FILE_SIZE_MB'] * 1MB
-$MAX_TOTAL_SIZE      = [int]$cfg['MAX_TOTAL_SIZE_MB'] * 1MB
+$EVENT_LOG_INTERVAL = [int]$cfg['EVENT_LOG_INTERVAL']
+$MAX_FILE_SIZE = [int]$cfg['MAX_FILE_SIZE_MB'] * 1MB
+$MAX_TOTAL_SIZE = [int]$cfg['MAX_TOTAL_SIZE_MB'] * 1MB
 
-$ONLINE_FILE_NAME  = "ups_online.txt"
+$ONLINE_FILE_NAME = "ups_online.txt"
 $EVENT_FILE_PREFIX = "ups_power_event"
 
 $UPS_VARS = @(
-    "battery.charge","battery.charge.low","battery.charge.warning",
-    "battery.runtime","battery.runtime.low","battery.status",
-    "battery.type","battery.voltage","battery.voltage.nominal",
-    "device.mfr","device.model","device.serial","device.type",
-    "driver.name","driver.state","driver.version","driver.version.data",
-    "driver.version.internal","driver.version.usb",
-    "input.frequency","input.transfer.high","input.transfer.low",
-    "input.voltage","input.voltage.nominal","output.voltage",
-    "ups.beeper.status","ups.delay.shutdown","ups.delay.start",
-    "ups.firmware","ups.load","ups.mfr","ups.model",
-    "ups.power.nominal","ups.realpower.nominal","ups.serial",
-    "ups.status","ups.test.result","ups.timer.shutdown","ups.timer.start",
-    "ups.vendorid","ups.productid"
+    "battery.charge", "battery.charge.low", "battery.charge.warning",
+    "battery.runtime", "battery.runtime.low", "battery.status",
+    "battery.type", "battery.voltage", "battery.voltage.nominal",
+    "device.mfr", "device.model", "device.serial", "device.type",
+    "driver.name", "driver.state", "driver.version", "driver.version.data",
+    "driver.version.internal", "driver.version.usb",
+    "input.frequency", "input.transfer.high", "input.transfer.low",
+    "input.voltage", "input.voltage.nominal", "output.voltage",
+    "ups.beeper.status", "ups.delay.shutdown", "ups.delay.start",
+    "ups.firmware", "ups.load", "ups.mfr", "ups.model",
+    "ups.power.nominal", "ups.realpower.nominal", "ups.serial",
+    "ups.status", "ups.test.result", "ups.timer.shutdown", "ups.timer.start",
+    "ups.vendorid", "ups.productid"
 )
 
 # ================================================================
 # 2. STATE
 # ================================================================
-$script:LastOnlineLog         = 0
-$script:EventFile             = $null
-$script:LastEventWrite        = 0
-$script:OnBatterySince        = $null
+$script:LastOnlineLog = 0
+$script:EventFile = $null
+$script:LastEventWrite = 0
+$script:OnBatterySince = $null
 $script:ShutdownPostponedTill = $null
-$script:ShutdownIssued        = $false
+$script:ShutdownIssued = $false
 
 # ================================================================
 # 3. UTILITIES
@@ -103,7 +103,8 @@ function Write-LogLine {
     $enc = New-Object System.Text.UTF8Encoding($false)
     if ($NoAppend) {
         [System.IO.File]::WriteAllText($Path, $Line + "`r`n", $enc)
-    } else {
+    }
+    else {
         [System.IO.File]::AppendAllText($Path, $Line + "`r`n", $enc)
     }
 }
@@ -112,25 +113,25 @@ function Format-LogLine {
     param([hashtable]$Vars)
     $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
     $sr = if ($Vars.ContainsKey("ups.status")) { $Vars["ups.status"] } else { "" }
-    if ($sr -match "OL")      { $st = "OnLine" }
-    elseif ($sr -match "OB")  { $st = "OnBattery" }
-    else                      { $st = $sr }
-    $charge  = if ($Vars.ContainsKey("battery.charge"))  { $Vars["battery.charge"] }  else { "?" }
+    if ($sr -match "OL") { $st = "OnLine" }
+    elseif ($sr -match "OB") { $st = "OnBattery" }
+    else { $st = $sr }
+    $charge = if ($Vars.ContainsKey("battery.charge")) { $Vars["battery.charge"] }  else { "?" }
     $runtime = if ($Vars.ContainsKey("battery.runtime")) { $Vars["battery.runtime"] } else { "?" }
-    $load    = if ($Vars.ContainsKey("ups.load"))        { $Vars["ups.load"] }        else { "?" }
-    $inV     = if ($Vars.ContainsKey("input.voltage"))   { $Vars["input.voltage"] }   else { "?" }
-    $outV    = if ($Vars.ContainsKey("output.voltage"))  { $Vars["output.voltage"] }  else { "?" }
+    $load = if ($Vars.ContainsKey("ups.load")) { $Vars["ups.load"] }        else { "?" }
+    $inV = if ($Vars.ContainsKey("input.voltage")) { $Vars["input.voltage"] }   else { "?" }
+    $outV = if ($Vars.ContainsKey("output.voltage")) { $Vars["output.voltage"] }  else { "?" }
     return "[$ts] Status`t$st`tCharge`t$charge %`tRuntime`t$runtime s`tLoad`t$load %`tInput`t$inV V`tOutput`t$outV V"
 }
 
 function Rotate-FileIfNeeded {
     param([string]$Path)
     if ((Test-Path $Path) -and ((Get-Item $Path).Length -ge $MAX_FILE_SIZE)) {
-        $dir  = Split-Path -Parent $Path
+        $dir = Split-Path -Parent $Path
         $base = [System.IO.Path]::GetFileNameWithoutExtension($Path)
-        $ext  = [System.IO.Path]::GetExtension($Path)
-        $ts   = Get-Date -Format "yyyyMMdd_HHmmss"
-        $new  = Join-Path $dir "${base}_${ts}${ext}"
+        $ext = [System.IO.Path]::GetExtension($Path)
+        $ts = Get-Date -Format "yyyyMMdd_HHmmss"
+        $new = Join-Path $dir "${base}_${ts}${ext}"
         Move-Item -Path $Path -Destination $new -Force
         return $null
     }
@@ -185,7 +186,7 @@ function Stop-EventLogging {
 function Write-OnlineLog {
     param([hashtable]$Vars)
     $filename = Join-Path $LOG_DIR $ONLINE_FILE_NAME
-    $rotated  = Rotate-FileIfNeeded -Path $filename
+    $rotated = Rotate-FileIfNeeded -Path $filename
     if ($null -eq $rotated) { $filename = Join-Path $LOG_DIR $ONLINE_FILE_NAME }
     Write-LogLine -Path $filename -Line (Format-LogLine -Vars $Vars)
 }
@@ -212,7 +213,7 @@ function Get-UPSVars {
         }
         $client.EndConnect($iar)
         $client.ReceiveTimeout = 5000
-        $client.SendTimeout    = 5000
+        $client.SendTimeout = 5000
 
         $stream = $client.GetStream()
         $reader = New-Object System.IO.StreamReader($stream)
@@ -242,9 +243,11 @@ function Get-UPSVars {
                 }
             }
         }
-    } catch {
+    }
+    catch {
         return @{ "error" = $_.Exception.Message }
-    } finally {
+    }
+    finally {
         if ($client) { try { $client.Close() } catch {} }
     }
     return $result
@@ -330,43 +333,44 @@ function Show-ShutdownDialog {
     $form.Controls.Add($btnPost)
 
     $script:dialogRemaining = $TimeoutSec
-    $script:dialogResult    = "timeout"
+    $script:dialogResult = "timeout"
 
     $timer = New-Object System.Windows.Forms.Timer
     $timer.Interval = 1000
     $timer.Add_Tick({
-        $script:dialogRemaining--
-        if ($script:dialogRemaining -le 0) {
-            $script:dialogRemaining = 0
-            $timer.Stop()
-            $script:dialogResult = "shutdown"
-            $form.Close()
-        } else {
-            $lblCountdown.Text = "Auto-shutdown in: $($script:dialogRemaining) s"
-        }
-    })
+            $script:dialogRemaining--
+            if ($script:dialogRemaining -le 0) {
+                $script:dialogRemaining = 0
+                $timer.Stop()
+                $script:dialogResult = "shutdown"
+                $form.Close()
+            }
+            else {
+                $lblCountdown.Text = "Auto-shutdown in: $($script:dialogRemaining) s"
+            }
+        })
 
     $lblCountdown.Text = "Auto-shutdown in: $($script:dialogRemaining) s"
 
     $btnNow.Add_Click({
-        $script:dialogResult = "shutdown"
-        $timer.Stop()
-        $form.Close()
-    })
+            $script:dialogResult = "shutdown"
+            $timer.Stop()
+            $form.Close()
+        })
 
     $btnPost.Add_Click({
-        $script:dialogResult = "postpone"
-        $timer.Stop()
-        $form.Close()
-    })
-
-    $form.Add_FormClosing({
-        param($s, $e)
-        if ($script:dialogResult -eq "timeout") {
             $script:dialogResult = "postpone"
             $timer.Stop()
-        }
-    })
+            $form.Close()
+        })
+
+    $form.Add_FormClosing({
+            param($s, $e)
+            if ($script:dialogResult -eq "timeout") {
+                $script:dialogResult = "postpone"
+                $timer.Stop()
+            }
+        })
 
     $timer.Start()
     [void]$form.ShowDialog()
@@ -401,9 +405,9 @@ function Invoke-ShutdownCheck {
         if ($null -ne $script:OnBatterySince) {
             Write-Host ("[{0}] AC restored. Shutdown state reset." -f (Get-Date -Format 'HH:mm:ss')) -ForegroundColor Green
         }
-        $script:OnBatterySince        = $null
+        $script:OnBatterySince = $null
         $script:ShutdownPostponedTill = $null
-        $script:ShutdownIssued        = $false
+        $script:ShutdownIssued = $false
         return
     }
 
@@ -415,7 +419,7 @@ function Invoke-ShutdownCheck {
     if ($script:ShutdownIssued) { return }
 
     $trigger = $false
-    $reason  = ""
+    $reason = ""
     $onBattMin = ((Get-Date) - $script:OnBatterySince).TotalMinutes
 
     if ($SHUTDOWN_MODE -ge 1 -and $SHUTDOWN_MODE -le 4) {
@@ -423,16 +427,18 @@ function Invoke-ShutdownCheck {
         $t = $thresholds[$SHUTDOWN_MODE - 1]
         if ($onBattMin -ge $t) {
             $trigger = $true
-            $reason  = "UPS has been on battery for $([math]::Round($onBattMin,1)) min (threshold: $t min)."
+            $reason = "UPS has been on battery for $([math]::Round($onBattMin,1)) min (threshold: $t min)."
         }
-    } elseif ($SHUTDOWN_MODE -ge 5 -and $SHUTDOWN_MODE -le 8) {
+    }
+    elseif ($SHUTDOWN_MODE -ge 5 -and $SHUTDOWN_MODE -le 8) {
         $thresholds = @(50, 25, 10, 5)
         $t = $thresholds[$SHUTDOWN_MODE - 5]
         if ($chargeInt -le $t) {
             $trigger = $true
-            $reason  = "Battery charge is $chargeInt% (threshold: $t%)."
+            $reason = "Battery charge is $chargeInt% (threshold: $t%)."
         }
-    } else {
+    }
+    else {
         return
     }
 
@@ -458,9 +464,9 @@ function Invoke-ShutdownCheck {
     Write-Host ("[{0}] SHUTDOWN TRIGGER: {1}" -f (Get-Date -Format 'HH:mm:ss'), $reason) -ForegroundColor Red
 
     $result = Show-ShutdownDialog -TimeoutSec $DIALOG_TIMEOUT -PostponeMinutes $POSTPONE_MIN `
-                                  -Title "UPS: Power Failure" `
-                                  -Reason "$reason  Mode: $modeText." `
-                                  -Info $info
+        -Title "UPS: Power Failure" `
+        -Reason "$reason  Mode: $modeText." `
+        -Info $info
 
     switch ($result) {
         "shutdown" {
@@ -578,8 +584,11 @@ function Get-HtmlPage {
   <div class="footer" id="footer">-</div>
 <script>
 const REFRESH = $RefreshSec * 1000;
+
 function fmtRuntime(sec){sec=parseInt(sec);if(isNaN(sec))return '-';return Math.floor(sec/60)+' min '+(sec%60)+' s';}
 function setCard(id,cls){document.getElementById(id).className='card'+(cls?' '+cls:'');}
+function setFavicon(name){document.getElementById('favicon').href='/'+name;}
+
 function updateFaviconAndTitle(status, charge, statusText){
   let icon = 'sphere-green.png';
   if (status.includes('OB')) {
@@ -590,40 +599,96 @@ function updateFaviconAndTitle(status, charge, statusText){
     else if (charge < 90) { icon = 'sphere-orange.png'; }
     else { icon = 'sphere-green.png'; }
   }
-  document.getElementById('favicon').href = '/' + icon;
+  setFavicon(icon);
   const title = isNaN(charge) ? '(' + (statusText || '?') + ')' : '(' + charge + '%) ' + (statusText || '');
   document.title = title;
 }
-function updateUI(data){
-  const errEl=document.getElementById('error');
-  if(data.error){errEl.style.display='block';errEl.textContent='Error: '+data.error;return;}
-  errEl.style.display='none';
-  const status=data['ups.status']||'';let statusText=status,statusCls='';
-  if(status.includes('OL')){statusText='On Line (AC power)';statusCls='green';}
-  if(status.includes('OB')){statusText='On Battery';statusCls='yellow';}
-  if(status.includes('LB')){statusText='Low Battery';statusCls='red';}
-  document.getElementById('v-status').textContent=statusText;setCard('c-status',statusCls);
-  const charge=parseInt(data['battery.charge']);let cc='';
-  if(!isNaN(charge)){if(charge>=80)cc='green';else if(charge>=50)cc='yellow';else cc='red';}
-  document.getElementById('v-charge').textContent=isNaN(charge)?'-':charge+' %';setCard('c-charge',cc);
-  document.getElementById('v-runtime').textContent=fmtRuntime(data['battery.runtime']);
-  document.getElementById('v-load').textContent=(data['ups.load']||'-')+' %';
-  setCard('c-load',parseInt(data['ups.load'])>80?'red':'');
-  document.getElementById('v-input').textContent=(data['input.voltage']||'-')+' V';
-  document.getElementById('v-output').textContent=(data['output.voltage']||'-')+' V';
-  const mfr=data['device.mfr']||'';const model=data['device.model']||'-';
-  document.getElementById('v-model').textContent=(mfr+' '+model).trim();
-  const pnom=data['ups.realpower.nominal'];
-  document.getElementById('v-power').textContent=(pnom&&pnom!=='0')?pnom+' W':'-';
-  const tbody=document.querySelector('#full-table tbody');tbody.innerHTML='';
-  const keys=Object.keys(data).sort();
-  for(const k of keys){const tr=document.createElement('tr');const td1=document.createElement('td');td1.textContent=k;const td2=document.createElement('td');td2.textContent=data[k];tr.appendChild(td1);tr.appendChild(td2);tbody.appendChild(tr);}
-  updateFaviconAndTitle(status, charge, statusText);
-  document.getElementById('last-update').textContent=new Date().toLocaleTimeString();
-  document.getElementById('footer').textContent='Parameters: '+keys.length;
+
+function setErrorState(msg) {
+  const errEl = document.getElementById('error');
+  errEl.style.display = 'block';
+  errEl.textContent = 'Error: ' + msg;
+
+  setFavicon('error.png');
+  document.title = '(!) UPS unreachable';
+
+  // reset cards
+  document.getElementById('v-status').textContent  = '-';
+  document.getElementById('v-charge').textContent  = '-';
+  document.getElementById('v-runtime').textContent = '-';
+  document.getElementById('v-load').textContent    = '-';
+  document.getElementById('v-input').textContent   = '-';
+  document.getElementById('v-output').textContent  = '-';
+  document.getElementById('v-model').textContent   = '-';
+  document.getElementById('v-power').textContent   = '-';
+  setCard('c-status', 'red');
+  setCard('c-charge', '');
+  setCard('c-load', '');
+
+  document.querySelector('#full-table tbody').innerHTML = '';
+  document.getElementById('footer').textContent = '';
+  document.getElementById('last-update').textContent = new Date().toLocaleTimeString();
 }
-function fetchStatus(){fetch('/api/status').then(r=>r.json()).then(d=>updateUI(d)).catch(e=>{const errEl=document.getElementById('error');errEl.style.display='block';errEl.textContent='Connection error: '+e;});}
-fetchStatus();setInterval(fetchStatus,REFRESH);
+
+function updateUI(data){
+  if (data.error) { setErrorState(data.error); return; }
+
+  document.getElementById('error').style.display = 'none';
+
+  const status = data['ups.status'] || '';
+  let statusText = status, statusCls = '';
+  if (status.includes('OL')) { statusText = 'On Line (AC power)'; statusCls = 'green'; }
+  if (status.includes('OB')) { statusText = 'On Battery'; statusCls = 'yellow'; }
+  if (status.includes('LB')) { statusText = 'Low Battery'; statusCls = 'red'; }
+
+  document.getElementById('v-status').textContent = statusText;
+  setCard('c-status', statusCls);
+
+  const charge = parseInt(data['battery.charge']);
+  let cc = '';
+  if (!isNaN(charge)) { if (charge >= 80) cc = 'green'; else if (charge >= 50) cc = 'yellow'; else cc = 'red'; }
+  document.getElementById('v-charge').textContent = isNaN(charge) ? '-' : charge + ' %';
+  setCard('c-charge', cc);
+
+  document.getElementById('v-runtime').textContent = fmtRuntime(data['battery.runtime']);
+  document.getElementById('v-load').textContent = (data['ups.load'] || '-') + ' %';
+  setCard('c-load', parseInt(data['ups.load']) > 80 ? 'red' : '');
+
+  document.getElementById('v-input').textContent  = (data['input.voltage']  || '-') + ' V';
+  document.getElementById('v-output').textContent = (data['output.voltage'] || '-') + ' V';
+
+  const mfr = data['device.mfr'] || '';
+  const model = data['device.model'] || '-';
+  document.getElementById('v-model').textContent = (mfr + ' ' + model).trim();
+
+  const pnom = data['ups.realpower.nominal'];
+  document.getElementById('v-power').textContent = (pnom && pnom !== '0') ? pnom + ' W' : '-';
+
+  const tbody = document.querySelector('#full-table tbody');
+  tbody.innerHTML = '';
+  const keys = Object.keys(data).sort();
+  for (const k of keys) {
+    const tr = document.createElement('tr');
+    const td1 = document.createElement('td'); td1.textContent = k;
+    const td2 = document.createElement('td'); td2.textContent = data[k];
+    tr.appendChild(td1); tr.appendChild(td2);
+    tbody.appendChild(tr);
+  }
+
+  updateFaviconAndTitle(status, charge, statusText);
+  document.getElementById('last-update').textContent = new Date().toLocaleTimeString();
+  document.getElementById('footer').textContent = 'Parameters: ' + keys.length;
+}
+
+function fetchStatus(){
+  fetch('/api/status')
+    .then(r => r.json())
+    .then(d => updateUI(d))
+    .catch(e => setErrorState('Connection error: ' + e));
+}
+
+fetchStatus();
+setInterval(fetchStatus, REFRESH);
 </script>
 </body>
 </html>
@@ -631,13 +696,14 @@ fetchStatus();setInterval(fetchStatus,REFRESH);
 }
 
 function Send-HttpResponse {
-    param([System.Net.HttpListenerContext]$Context,[int]$StatusCode,[string]$ContentType,[byte[]]$Body)
+    param([System.Net.HttpListenerContext]$Context, [int]$StatusCode, [string]$ContentType, [byte[]]$Body)
     try {
         $Context.Response.StatusCode = $StatusCode
         $Context.Response.ContentType = $ContentType
         $Context.Response.ContentLength64 = $Body.Length
         $Context.Response.OutputStream.Write($Body, 0, $Body.Length)
-    } catch {}
+    }
+    catch {}
     finally {
         try { $Context.Response.OutputStream.Close() } catch {}
         try { $Context.Response.Close() } catch {}
@@ -650,12 +716,13 @@ function Handle-Request {
     $path = $Context.Request.Url.AbsolutePath
 
     # --- Serve favicon PNGs from script folder ---
-    if ($path -match "^/sphere-(green|orange|red|magenta)\.png$") {
+    if ($path -match "^/(sphere-(green|orange|red|magenta)|error)\.png$") {
         $imgPath = Join-Path $ScriptDir $path.TrimStart('/')
         if (Test-Path $imgPath) {
             $bytes = [System.IO.File]::ReadAllBytes($imgPath)
             Send-HttpResponse -Context $Context -StatusCode 200 -ContentType "image/png" -Body $bytes
-        } else {
+        }
+        else {
             Send-HttpResponse -Context $Context -StatusCode 404 -ContentType "text/plain; charset=utf-8" -Body ([System.Text.Encoding]::UTF8.GetBytes("Not found"))
         }
         return
@@ -685,23 +752,23 @@ function Handle-Request {
 function Show-UPSStatus {
     param([hashtable]$Vars)
     if ($Vars.ContainsKey("error")) { Write-Host "Connection error: $($Vars['error'])" -ForegroundColor Red; return }
-    $model  = if ($Vars.ContainsKey("device.model")) { $Vars["device.model"] } else { "?" }
-    $mfr    = if ($Vars.ContainsKey("device.mfr"))   { $Vars["device.mfr"] }   else { "" }
-    $status = if ($Vars.ContainsKey("ups.status"))   { $Vars["ups.status"] }  else { "" }
-    $charge = if ($Vars.ContainsKey("battery.charge"))  { $Vars["battery.charge"] }  else { "?" }
-    $runtime= if ($Vars.ContainsKey("battery.runtime")) { $Vars["battery.runtime"] } else { $null }
-    $bVolt  = if ($Vars.ContainsKey("battery.voltage")) { $Vars["battery.voltage"] } else { $null }
+    $model = if ($Vars.ContainsKey("device.model")) { $Vars["device.model"] } else { "?" }
+    $mfr = if ($Vars.ContainsKey("device.mfr")) { $Vars["device.mfr"] }   else { "" }
+    $status = if ($Vars.ContainsKey("ups.status")) { $Vars["ups.status"] }  else { "" }
+    $charge = if ($Vars.ContainsKey("battery.charge")) { $Vars["battery.charge"] }  else { "?" }
+    $runtime = if ($Vars.ContainsKey("battery.runtime")) { $Vars["battery.runtime"] } else { $null }
+    $bVolt = if ($Vars.ContainsKey("battery.voltage")) { $Vars["battery.voltage"] } else { $null }
     $bVoltN = if ($Vars.ContainsKey("battery.voltage.nominal")) { $Vars["battery.voltage.nominal"] } else { $null }
-    $inV    = if ($Vars.ContainsKey("input.voltage"))  { $Vars["input.voltage"] }  else { $null }
-    $inF    = if ($Vars.ContainsKey("input.frequency")){ $Vars["input.frequency"] } else { $null }
-    $outV   = if ($Vars.ContainsKey("output.voltage")) { $Vars["output.voltage"] } else { $null }
-    $load   = if ($Vars.ContainsKey("ups.load"))       { $Vars["ups.load"] }       else { $null }
-    $pNom   = if ($Vars.ContainsKey("ups.realpower.nominal")) { $Vars["ups.realpower.nominal"] } else { $null }
+    $inV = if ($Vars.ContainsKey("input.voltage")) { $Vars["input.voltage"] }  else { $null }
+    $inF = if ($Vars.ContainsKey("input.frequency")) { $Vars["input.frequency"] } else { $null }
+    $outV = if ($Vars.ContainsKey("output.voltage")) { $Vars["output.voltage"] } else { $null }
+    $load = if ($Vars.ContainsKey("ups.load")) { $Vars["ups.load"] }       else { $null }
+    $pNom = if ($Vars.ContainsKey("ups.realpower.nominal")) { $Vars["ups.realpower.nominal"] } else { $null }
     $statusText = switch -Regex ($status) {
         "OL LB" { "AC present, battery low" }
         "OB LB" { "On battery, low battery" }
-        "OB"    { "On battery" }
-        "OL"    { "On line (AC power)" }
+        "OB" { "On battery" }
+        "OL" { "On line (AC power)" }
         default { $status }
     }
     Clear-Host
@@ -716,7 +783,7 @@ function Show-UPSStatus {
     Write-Host ""
     Write-Host "BATTERY:" -ForegroundColor Cyan
     if ($charge) {
-        $ci=0;[int]::TryParse($charge,[ref]$ci)|Out-Null
+        $ci = 0; [int]::TryParse($charge, [ref]$ci) | Out-Null
         $col = if ($ci -ge 80) { "Green" } elseif ($ci -ge 50) { "Yellow" } else { "Red" }
         Write-Host ("   Charge:     {0} %" -f $charge) -ForegroundColor $col
     }
@@ -737,7 +804,7 @@ function Show-UPSStatus {
     }
     if ($outV) { Write-Host "   Output:     $outV V" -ForegroundColor Gray }
     if ($load) {
-        $li=0;[int]::TryParse($load,[ref]$li)|Out-Null
+        $li = 0; [int]::TryParse($load, [ref]$li) | Out-Null
         $col = if ($li -le 50) { "Green" } elseif ($li -le 80) { "Yellow" } else { "Red" }
         Write-Host "   Load:       $load %" -ForegroundColor $col
     }
@@ -765,7 +832,8 @@ function Start-Monitor {
             Invoke-LoggerIteration -Vars $vars
             Start-Sleep -Seconds $POLL_INTERVAL
         }
-    } finally {
+    }
+    finally {
         if ($script:EventFile) {
             Write-LogLine -Path $script:EventFile -Line ("[" + (Get-Date -Format "yyyy-MM-dd HH:mm:ss") + "] === MONITORING STOPPED ===")
         }
@@ -813,13 +881,15 @@ function Start-WebMonitor {
                 $vars = Get-UPSVars
                 if ($vars.ContainsKey("error")) {
                     Write-Host ("[{0}] NUT: {1}" -f (Get-Date -Format 'HH:mm:ss'), $vars["error"]) -ForegroundColor Red
-                } else {
+                }
+                else {
                     Invoke-LoggerIteration -Vars $vars
                 }
                 $lastPoll = $now
             }
         }
-    } finally {
+    }
+    finally {
         if ($script:EventFile) {
             Write-LogLine -Path $script:EventFile -Line ("[" + (Get-Date -Format "yyyy-MM-dd HH:mm:ss") + "] === MONITORING STOPPED ===")
         }
@@ -833,7 +903,7 @@ function Start-WebMonitor {
 # 10. ENTRY POINT
 # ================================================================
 switch ($Mode) {
-    "show"    { Show-UPSStatus -Vars (Get-UPSVars) }
+    "show" { Show-UPSStatus -Vars (Get-UPSVars) }
     "monitor" { Start-Monitor }
-    "web"     { Start-WebMonitor }
+    "web" { Start-WebMonitor }
 }
