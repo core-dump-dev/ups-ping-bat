@@ -6,42 +6,69 @@ param(
 )
 
 # ================================================================
-# 1. LOAD CONFIG
+# 1. LOAD CONFIG (все настройки — только из ups_shutdown.cfg)
 # ================================================================
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $CfgPath = Join-Path $ScriptDir "ups_shutdown.cfg"
 $LOG_DIR = Join-Path $ScriptDir "logs"
 
-$cfg = @{
-    MODE                = 1
-    DIALOG_TIMEOUT_SEC  = 60
-    POSTPONE_MINUTES    = 5
-    SHUTDOWN_GRACE_SEC  = 10
-    POLL_INTERVAL       = 5
-    NUT_HOST            = "192.168.0.15"
-    NUT_PORT            = 3493
-    UPS_NAME            = "ups"
-    WEB_PORT            = 9921
-    WEB_HOST            = "localhost"
-    WEB_REFRESH         = 5
-    ONLINE_LOG_INTERVAL = 3600
-    EVENT_LOG_INTERVAL  = 5
-    MAX_FILE_SIZE_MB    = 1
-    MAX_TOTAL_SIZE_MB   = 10
+# Список обязательных ключей — если какого-то нет, скрипт упадёт с ошибкой
+$RequiredKeys = @(
+    "MODE",
+    "DIALOG_TIMEOUT_SEC",
+    "POSTPONE_MINUTES",
+    "SHUTDOWN_GRACE_SEC",
+    "POLL_INTERVAL",
+    "NUT_HOST",
+    "NUT_PORT",
+    "UPS_NAME",
+    "WEB_PORT",
+    "WEB_HOST",
+    "WEB_REFRESH",
+    "ONLINE_LOG_INTERVAL",
+    "EVENT_LOG_INTERVAL",
+    "MAX_FILE_SIZE_MB",
+    "MAX_TOTAL_SIZE_MB",
+    "AVR_TOLERANCE_V",
+    "AVR_LOG_FILE"
+)
+
+if (-not (Test-Path $CfgPath)) {
+    Write-Host ""
+    Write-Host "ERROR: config file not found:" -ForegroundColor Red
+    Write-Host "  $CfgPath" -ForegroundColor Red
+    Write-Host "Please create it before running the monitor." -ForegroundColor Red
+    Write-Host ""
+    exit 1
 }
 
-if (Test-Path $CfgPath) {
-    Get-Content $CfgPath | ForEach-Object {
-        $line = $_.Trim()
-        if ($line -eq "" -or $line.StartsWith("#")) { return }
-        if ($line -match '^([^=]+)=(.+)$') {
-            $k = $matches[1].Trim()
-            $v = $matches[2].Trim().Trim('"').Trim("'")
-            if ($cfg.ContainsKey($k)) { $cfg[$k] = $v }
-        }
+$cfg = @{}
+Get-Content $CfgPath | ForEach-Object {
+    $line = $_.Trim()
+    if ($line -eq "" -or $line.StartsWith("#")) { return }
+    if ($line -match '^([^=]+)=(.+)$') {
+        $k = $matches[1].Trim()
+        $v = $matches[2].Trim().Trim('"').Trim("'")
+        $cfg[$k] = $v
     }
 }
 
+# Проверка обязательных ключей
+$missing = @()
+foreach ($k in $RequiredKeys) {
+    if (-not $cfg.ContainsKey($k) -or $cfg[$k] -eq "") {
+        $missing += $k
+    }
+}
+if ($missing.Count -gt 0) {
+    Write-Host ""
+    Write-Host "ERROR: missing required keys in ups_shutdown.cfg:" -ForegroundColor Red
+    $missing | ForEach-Object { Write-Host "  - $_" -ForegroundColor Red }
+    Write-Host ""
+    exit 1
+}
+
+# Приводим типы
 $SHUTDOWN_MODE = [int]$cfg['MODE']
 $DIALOG_TIMEOUT = [int]$cfg['DIALOG_TIMEOUT_SEC']
 $POSTPONE_MIN = [int]$cfg['POSTPONE_MINUTES']
@@ -57,6 +84,8 @@ $ONLINE_LOG_INTERVAL = [int]$cfg['ONLINE_LOG_INTERVAL']
 $EVENT_LOG_INTERVAL = [int]$cfg['EVENT_LOG_INTERVAL']
 $MAX_FILE_SIZE = [int]$cfg['MAX_FILE_SIZE_MB'] * 1MB
 $MAX_TOTAL_SIZE = [int]$cfg['MAX_TOTAL_SIZE_MB'] * 1MB
+$AVR_TOLERANCE = [int]$cfg['AVR_TOLERANCE_V']
+$AVR_LOG_FILE = [string]$cfg['AVR_LOG_FILE']
 
 $ONLINE_FILE_NAME = "ups_online.txt"
 $EVENT_FILE_PREFIX = "ups_power_event"
@@ -87,6 +116,7 @@ $script:LastEventWrite = 0
 $script:OnBatterySince = $null
 $script:ShutdownPostponedTill = $null
 $script:ShutdownIssued = $false
+$script:LastAvrState = "Unknown"
 
 # ================================================================
 # 3. UTILITIES
@@ -135,8 +165,8 @@ function Format-LogLine {
     $avr = "?"
     if ($inV -and $outV) {
         $diff = [double]$outV - [double]$inV
-        if ($diff -gt 10) { $avr = "Boost" }
-        elseif ($diff -lt -10) { $avr = "Trim" }
+        if ($diff -gt $AVR_TOLERANCE) { $avr = "Boost" }
+        elseif ($diff -lt (-$AVR_TOLERANCE)) { $avr = "Trim" }
         else { $avr = "Normal" }
     }
 
@@ -147,7 +177,7 @@ function Format-LogLine {
     "`tUsage`t$watts W of $pNom W"
     if ($inV) { $line += "`tIn`t$inV V" }
     if ($outV) { $line += "`tOut`t$outV V" }
-    if ($avr -ne "?") { $line += "`tAVR`t$avr" }
+    $line += "`tAVR`t$avr"
     if ($inF) { $line += "`tFreq`t$inF Hz" }
 
     return $line
@@ -170,14 +200,14 @@ function Rotate-FileIfNeeded {
 function Cleanup-AllLogs {
     $patterns = @(
         (Join-Path $LOG_DIR "ups_online_*.txt"),
-        (Join-Path $LOG_DIR "ups_power_event_*.txt")
+        (Join-Path $LOG_DIR "ups_power_event_*.txt"),
+        (Join-Path $LOG_DIR "ups_avr_*.txt")
     )
     $all = @()
     foreach ($p in $patterns) {
         $all += @(Get-ChildItem -Path $p -ErrorAction SilentlyContinue)
     }
 
-    # Не трогаем активный событийный файл
     if ($script:EventFile) {
         $active = (Get-Item $script:EventFile -ErrorAction SilentlyContinue).FullName
         if ($active) {
@@ -243,6 +273,48 @@ function Write-EventLog {
     $rotated = Rotate-FileIfNeeded -Path $script:EventFile
     if ($null -eq $rotated) { Continue-EventLogging -Vars $Vars }
     else { Write-LogLine -Path $script:EventFile -Line (Format-LogLine -Vars $Vars) }
+}
+
+function Write-AvrLogIfChanged {
+    param([hashtable]$Vars)
+
+    $inV = if ($Vars.ContainsKey("input.voltage")) { $Vars["input.voltage"] }  else { $null }
+    $outV = if ($Vars.ContainsKey("output.voltage")) { $Vars["output.voltage"] } else { $null }
+
+    if (-not $inV -or -not $outV) {
+        if ($script:LastAvrState -ne "Unknown" -and $script:LastAvrState -ne "N/A") {
+            $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+            $line = "[$ts] AVR`t$($script:LastAvrState) -> N/A`tIn`t-`tOut`t-`tDiff`t-"
+            $filename = Join-Path $LOG_DIR $AVR_LOG_FILE
+            $rotated = Rotate-FileIfNeeded -Path $filename
+            if ($null -eq $rotated) { $filename = Join-Path $LOG_DIR $AVR_LOG_FILE }
+            Write-LogLine -Path $filename -Line $line
+            Write-Host ("[{0}] AVR change: {1} -> N/A (on battery)" -f (Get-Date -Format 'HH:mm:ss'), $script:LastAvrState) -ForegroundColor Cyan
+            $script:LastAvrState = "N/A"
+        }
+        return
+    }
+
+    $diff = [double]$outV - [double]$inV
+    $avr = "Normal"
+    if ($diff -gt $AVR_TOLERANCE) { $avr = "Boost" }
+    elseif ($diff -lt (-$AVR_TOLERANCE)) { $avr = "Trim" }
+
+    if ($avr -ne $script:LastAvrState) {
+        $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+        $from = if ($script:LastAvrState -eq "Unknown") { "-" } else { $script:LastAvrState }
+        $line = "[$ts] AVR`t$from -> $avr`tIn`t$inV V`tOut`t$outV V`tDiff`t$([math]::Round($diff,1)) V"
+
+        $filename = Join-Path $LOG_DIR $AVR_LOG_FILE
+        $rotated = Rotate-FileIfNeeded -Path $filename
+        if ($null -eq $rotated) { $filename = Join-Path $LOG_DIR $AVR_LOG_FILE }
+        Write-LogLine -Path $filename -Line $line
+
+        Write-Host ("[{0}] AVR change: {1} -> {2} (In {3} V, Out {4} V, diff {5:+0.0;-0.0;0} V)" -f `
+            (Get-Date -Format 'HH:mm:ss'), $from, $avr, $inV, $outV, $diff) -ForegroundColor Cyan
+
+        $script:LastAvrState = $avr
+    }
 }
 
 # ================================================================
@@ -549,20 +621,17 @@ function Invoke-LoggerIteration {
 
     $now = Get-UnixTime
 
-    # Онлайн-лог раз в час
     if ($now - $script:LastOnlineLog -ge $ONLINE_LOG_INTERVAL) {
         Write-OnlineLog -Vars $Vars
         Write-Host ("[{0}] Online log written." -f (Get-Date -Format 'HH:mm:ss')) -ForegroundColor DarkGray
         $script:LastOnlineLog = $now
     }
 
-    # Раз в час чистим старые ротации
     if ($now - $script:LastCleanup -ge 3600) {
         Cleanup-AllLogs
         $script:LastCleanup = $now
     }
 
-    # Событие — только когда на батарее (OB)
     $eventActive = ($currentStatus -match "OB")
 
     if ($eventActive -and -not $script:EventFile) {
@@ -581,6 +650,7 @@ function Invoke-LoggerIteration {
         }
     }
 
+    Write-AvrLogIfChanged -Vars $Vars
     Invoke-ShutdownCheck -Vars $Vars
 }
 
@@ -729,16 +799,15 @@ function updateUI(data){
     setCard('c-usage', '');
   }
 
-  // AVR state из разницы In / Out
   const inV  = parseFloat(data['input.voltage']);
   const outV = parseFloat(data['output.voltage']);
   const avrEl = document.getElementById('v-avr');
   if (!isNaN(inV) && !isNaN(outV)) {
     const diff = outV - inV;
     let avrText, avrCls;
-    if (diff > 10)       { avrText = 'Boost (raising)';  avrCls = 'yellow'; }
-    else if (diff < -10) { avrText = 'Trim (lowering)';  avrCls = 'yellow'; }
-    else                 { avrText = 'Normal';           avrCls = 'green';  }
+    if (diff > 3)       { avrText = 'Boost (raising)';  avrCls = 'yellow'; }
+    else if (diff < -3) { avrText = 'Trim (lowering)';  avrCls = 'yellow'; }
+    else                { avrText = 'Normal';           avrCls = 'green';  }
     avrEl.textContent = avrText + '  (' + (diff >= 0 ? '+' : '') + diff.toFixed(1) + ' V)';
     setCard('c-avr', avrCls);
   } else {
@@ -896,7 +965,7 @@ function Show-UPSStatus {
     if ($outV) { Write-Host "   Output:     $outV V" -ForegroundColor Gray }
     if ($inV -and $outV) {
         $diff = [double]$outV - [double]$inV
-        $avr = if ($diff -gt 10) { "Boost" } elseif ($diff -lt -10) { "Trim" } else { "Normal" }
+        $avr = if ($diff -gt $AVR_TOLERANCE) { "Boost" } elseif ($diff -lt (-$AVR_TOLERANCE)) { "Trim" } else { "Normal" }
         Write-Host ("   AVR:        {0} ({1:+0.0;-0.0;0} V)" -f $avr, $diff) -ForegroundColor Gray
     }
     if ($load) {
